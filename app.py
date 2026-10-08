@@ -36,7 +36,8 @@ def carregar_dados(uploaded_file):
         def clean_header(col):
             c = str(col).strip().upper()
             c = re.sub(r'[\r\n]+', ' ', c) 
-            c = re.sub(r'[\u200B-\u200D\uFEFF\xA0]', ' ', c) 
+            # A correção do erro está aqui (remoção do 'r' antes da string para o Python descodificar o unicode corretamente)
+            c = re.sub('[\u200B-\u200D\uFEFF\xA0]', ' ', c) 
             c = re.sub(r'\s+', ' ', c).strip() 
             return c
             
@@ -48,9 +49,10 @@ def carregar_dados(uploaded_file):
                 st.error(f"Coluna obrigatória não encontrada: '{col}'. Colunas detetadas: {', '.join(df.columns)}")
                 return None
                 
-        # 1. Limpeza Segura de Equipamentos (Nativa do Pandas, evita erros Float/NaN)
+        # 1. Limpeza Segura de Equipamentos
         df['EQUIPAMENTO'] = df['EQUIPAMENTO'].fillna('N/A').astype(str)
-        df['EQUIPAMENTO'] = df['EQUIPAMENTO'].str.replace(r'[\u200B-\u200D\uFEFF\xA0]', ' ', regex=True)
+        # Correção aplicada também aqui na limpeza da coluna
+        df['EQUIPAMENTO'] = df['EQUIPAMENTO'].str.replace('[\u200B-\u200D\uFEFF\xA0]', ' ', regex=True)
         df['EQUIPAMENTO'] = df['EQUIPAMENTO'].str.replace(r'\s+', ' ', regex=True)
         df['EQUIPAMENTO'] = df['EQUIPAMENTO'].str.strip().str.upper()
         
@@ -85,7 +87,7 @@ def carregar_dados(uploaded_file):
         df['mensal'] = df['DATA_OBJ'].dt.strftime('%m/%Y')
         df['semanal'] = df['DATA_OBJ'].apply(lambda x: f"Semana {x.isocalendar().week} - {x.isocalendar().year}")
         
-        # 4. Textos e Causas (Seguro contra colunas inexistentes)
+        # 4. Textos e Causas
         def preparar_coluna_texto(col_name, new_name):
             if col_name in df.columns:
                 df[new_name] = df[col_name].fillna('N/A').astype(str).str.strip().str.upper()
@@ -246,7 +248,7 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao):
             fig_lin.update_layout(title=f"EVOLUÇÃO DO DF POR MODELO ({limite_evolucao} PERÍODOS)", template="plotly_white", margin=dict(t=40, b=0, l=0, r=0))
             st.plotly_chart(fig_lin, use_container_width=True)
 
-    # 3. DADOS POR EQUIPAMENTO (Gráfico de Barras - MOSTRAM TODOS DA FROTA MESMO 100%)
+    # 3. DADOS POR EQUIPAMENTO (Gráfico de Barras)
     eqps_para_analise = eqp_selecionados
     
     if len(eqps_para_analise) == 0:
@@ -311,7 +313,7 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao):
     abaixo_meta = agrup_eqp[agrup_eqp['DF_Perc'] < meta_perc].copy()
     
     if abaixo_meta.empty:
-        st.success("🎉 Excelente! Nenhum equipamento selecionado ficou abaixo da meta neste período.")
+        st.success("🎉 Excelente! Nenhum equipamento na frota ativa ficou abaixo da meta neste período.")
     else:
         tabela_dados = []
         for _, row in abaixo_meta.iterrows():

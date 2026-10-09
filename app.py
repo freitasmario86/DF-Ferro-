@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -20,12 +21,13 @@ st.markdown("""
     .val-good { color: #4ade80; }
     .val-bad { color: #ff6b6b; }
     
-    /* Configuração perfeita para quando o utilizador clica em "Gerar PDF" */
+    /* Regras rigorosas para PDF perfeito e sem cortes */
     @media print {
         header, .stSidebar, .stToolbar, footer { display: none !important; }
         .stApp { background-color: white !important; }
-        .main { padding: 0 !important; margin: 0 !important; }
+        .main { padding: 0 !important; margin: 0 !important; width: 100% !important; max-width: 100% !important; }
         .stTabs { page-break-inside: avoid; }
+        .js-plotly-plot { page-break-inside: avoid; }
     }
     </style>
 """, unsafe_allow_html=True)
@@ -40,7 +42,6 @@ def carregar_dados(uploaded_file):
     try:
         df = pd.read_excel(uploaded_file)
         
-        # Limpeza agressiva e segura dos cabeçalhos
         def clean_header(col):
             c = str(col).strip().upper()
             c = re.sub(r'[\r\n]+', ' ', c) 
@@ -56,16 +57,13 @@ def carregar_dados(uploaded_file):
                 st.error(f"Coluna obrigatória não encontrada: '{col}'. Colunas detetadas: {', '.join(df.columns)}")
                 return None
                 
-        # Limpeza de Equipamentos
         df['EQUIPAMENTO'] = df['EQUIPAMENTO'].fillna('N/A').astype(str)
         df['EQUIPAMENTO'] = df['EQUIPAMENTO'].str.replace('[\u200B-\u200D\uFEFF\xA0]', ' ', regex=True)
         df['EQUIPAMENTO'] = df['EQUIPAMENTO'].str.replace(r'\s+', ' ', regex=True)
         df['EQUIPAMENTO'] = df['EQUIPAMENTO'].str.strip().str.upper()
         df = df[df['EQUIPAMENTO'] != 'CS18']
         
-        # Definir Modelo
-        if 'MODELO EQUIPAMENTO' in df.columns:
-            df['MODELO'] = df['MODELO EQUIPAMENTO']
+        if 'MODELO EQUIPAMENTO' in df.columns: df['MODELO'] = df['MODELO EQUIPAMENTO']
         elif 'MODELO' in df.columns: pass 
         else: df['MODELO'] = "N/A"
             
@@ -78,11 +76,9 @@ def carregar_dados(uploaded_file):
             
         df['MODELO'] = df.apply(lambda row: get_official_model(row['EQUIPAMENTO'], row['MODELO']), axis=1)
         
-        # Filtra a frota oficial
         df = df[~((df['MODELO'] == 'SKT110S') & (~df['EQUIPAMENTO'].isin(ALLOWED_110S)))]
         df = df[~((df['MODELO'] == 'SKT130PRO') & (~df['EQUIPAMENTO'].isin(ALLOWED_130PRO)))]
 
-        # Processamento de Datas
         df['DATA_OBJ'] = pd.to_datetime(df['DATA INÍCIO'], errors='coerce')
         df = df.dropna(subset=['DATA_OBJ']).copy()
         
@@ -179,7 +175,7 @@ if file_upload:
     df = carregar_dados(file_upload)
     
     if df is not None and not df.empty:
-        visao = st.sidebar.selectbox("2. Visão", ['diario', 'semanal', 'mensal'], format_func=lambda x: x.capitalize())
+        visao = st.sidebar.selectbox("2. Visão Principal", ['diario', 'semanal', 'mensal'], format_func=lambda x: x.capitalize())
         
         periodos_disp, _ = get_periodos_ordenados(df, visao)
         periodos_selecionados = st.sidebar.multiselect("3. Período(s)", periodos_disp, default=[periodos_disp[0]] if periodos_disp else [])
@@ -199,7 +195,6 @@ if file_upload:
         qtd_sem = c_s.number_input("Sem", value=4, min_value=1)
         qtd_mes = c_m.number_input("Mês", value=12, min_value=1)
         
-        # Filtro Dinâmico de Equipamentos
         eqp_mapping = {eqp: mod for eqp, mod in zip(df['EQUIPAMENTO'], df['MODELO'])}
         for eqp in ALLOWED_110S: eqp_mapping[eqp] = 'SKT110S'
         for eqp in ALLOWED_130PRO: eqp_mapping[eqp] = 'SKT130PRO'
@@ -207,25 +202,29 @@ if file_upload:
         eqps_ativos = sorted(list(set([e for e, m in eqp_mapping.items() if modelo_sel == "Todos os Modelos" or m == modelo_sel])))
         eqp_selecionados = st.sidebar.multiselect("8. Equipamentos (Análise)", eqps_ativos, default=eqps_ativos)
 
-        # BOTÃO PARA GERAR PDF
+        # BOTÃO PARA GERAR PDF (Usando Componentes para garantir execução do JS no Parent Window)
         st.sidebar.markdown("---")
-        pdf_button_html = """
-        <button onclick="window.print()" style="background-color:#d32f2f; color:white; padding:12px; border:none; border-radius:6px; width:100%; cursor:pointer; font-weight:bold; font-size:14px; text-transform:uppercase;">
-            📄 Exportar Relatório PDF
-        </button>
-        <p style="font-size:10px; color:#666; margin-top:5px; text-align:center;">Para formato A4, escolha a opção "Paisagem" na janela que abrir.</p>
-        """
-        st.sidebar.markdown(pdf_button_html, unsafe_allow_html=True)
+        components.html(
+            """
+            <button onclick="window.parent.print()" style="background-color:#d32f2f; color:white; padding:12px; border:none; border-radius:6px; width:100%; cursor:pointer; font-weight:bold; font-size:14px; text-transform:uppercase; font-family:sans-serif;">
+                📄 Exportar Relatório PDF
+            </button>
+            <p style="font-size:10px; color:#666; margin-top:5px; text-align:center; font-family:sans-serif;">Para formato A4 perfeito, escolha "Paisagem" e oculte Cabeçalhos/Rodapés na impressão.</p>
+            """,
+            height=100
+        )
 
 # --- RENDERIZAÇÃO DA ABA ---
-def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, tab_id, tipo_evolucao=None):
+# Correção Principal: O filtro usa agora o `tipo_evolucao` (que muda consoante a aba) em vez de usar o `visao` global.
+def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, tab_id, tipo_evolucao):
     st.markdown(f"## {titulo}")
     
     if not periodos_analise:
         st.info("Nenhum período válido para análise nesta aba.")
         return
 
-    df_p = df[df[visao].isin(periodos_analise)].copy()
+    # BUG 100% CORRIGIDO: Usa o tipo_evolucao (diario, semanal ou mensal) apropriado para filtrar esta aba
+    df_p = df[df[tipo_evolucao].isin(periodos_analise)].copy()
     max_date = df_p['DATA_OBJ'].max() if not df_p.empty else df['DATA_OBJ'].max()
     
     # 1. CARTÕES DE MODELO
@@ -239,7 +238,7 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
         
         if len(eqps_com_atividade) == 0: continue
             
-        h_base_total = calcular_horas_base(visao, periodos_analise) * len(eqps_com_atividade)
+        h_base_total = calcular_horas_base(tipo_evolucao, periodos_analise) * len(eqps_com_atividade)
         h_parada = df_mod_periodo['HORAS'].sum()
         df_global = max(0, (h_base_total - h_parada) / h_base_total) * 100
         cls_color = "val-good" if df_global >= meta_perc else "val-bad"
@@ -288,7 +287,7 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
         st.info("Nenhum equipamento da frota foi selecionado.")
         return
 
-    horas_base_eqp = calcular_horas_base(visao, periodos_analise)
+    horas_base_eqp = calcular_horas_base(tipo_evolucao, periodos_analise)
     df_p_analise = df_p[df_p['EQUIPAMENTO'].isin(eqps_para_analise)]
     agrup_eqp = df_p_analise.groupby('EQUIPAMENTO')['HORAS'].sum().reset_index()
     
@@ -345,14 +344,13 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
         fig_det.update_layout(template="plotly_white", margin=dict(t=40, b=0, l=0, r=0), yaxis_title="")
         st.plotly_chart(fig_det, use_container_width=True, key=f"bar_det_{tab_id}")
 
-    # 5. TABELA EM HTML PURO COM CONCATENAÇÃO EM LINHA (RESOLVE RENDERIZAÇÃO E CORTES)
+    # 5. TABELA EM HTML PURO (PRE-WRAP GARANTE QUE NÃO CORTA)
     st.markdown("### 🔻 PRINCIPAIS CONTRIBUINTES: EQUIPAMENTOS ABAIXO DA META")
     abaixo_meta = agrup_eqp[agrup_eqp['DF_Perc'] < meta_perc].copy()
     
     if abaixo_meta.empty:
         st.success("🎉 Excelente! Nenhum equipamento selecionado ficou abaixo da meta neste período.")
     else:
-        # Construção do HTML em linha contínua sem formatação de parágrafos/espaços para evitar bugs de markdown
         tabela_html = "<table style='width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);'>"
         tabela_html += "<thead><tr style='background-color: #222; color: white; text-align: left;'>"
         tabela_html += "<th style='padding: 12px; border: 1px solid #ddd;'>Equipamento</th>"
@@ -398,7 +396,7 @@ if file_upload and 'df' in locals() and df is not None and len(periodos_selecion
         desc = periodos_selecionados[0] if len(periodos_selecionados)==1 else f"{len(periodos_selecionados)} Períodos Selecionados"
         renderizar_aba(
             titulo=f"Visão: {visao.capitalize()} | Períodos: {desc}",
-            periodos_analise=periodos_selecionados, mostra_evolucao=False, limite_evolucao=0, tab_id="prin"
+            periodos_analise=periodos_selecionados, mostra_evolucao=False, limite_evolucao=0, tab_id="prin", tipo_evolucao=visao
         )
         
     with tab2:

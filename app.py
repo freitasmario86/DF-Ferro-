@@ -7,9 +7,9 @@ import re
 from datetime import datetime
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Dashboard Executivo DF", layout="wide", page_icon="📊")
+st.set_page_config(page_title="Dashboard Executivo DF", layout="wide", page_icon="📊", initial_sidebar_state="expanded")
 
-# --- CSS CUSTOMIZADO ---
+# --- CSS CUSTOMIZADO E CONFIGURAÇÃO PARA PDF ---
 st.markdown("""
     <style>
     .stApp { background-color: #f4f4f9; }
@@ -19,6 +19,14 @@ st.markdown("""
     .metric-sub { font-size: 11px; color: #aaa; margin-bottom: 10px; }
     .val-good { color: #4ade80; }
     .val-bad { color: #ff6b6b; }
+    
+    /* Configuração perfeita para quando o utilizador clica em "Gerar PDF" */
+    @media print {
+        header, .stSidebar, .stToolbar, footer { display: none !important; }
+        .stApp { background-color: white !important; }
+        .main { padding: 0 !important; margin: 0 !important; }
+        .stTabs { page-break-inside: avoid; }
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -32,7 +40,7 @@ def carregar_dados(uploaded_file):
     try:
         df = pd.read_excel(uploaded_file)
         
-        # Limpeza SUPER AGRESSIVA e segura dos cabeçalhos
+        # Limpeza agressiva e segura dos cabeçalhos
         def clean_header(col):
             c = str(col).strip().upper()
             c = re.sub(r'[\r\n]+', ' ', c) 
@@ -48,21 +56,18 @@ def carregar_dados(uploaded_file):
                 st.error(f"Coluna obrigatória não encontrada: '{col}'. Colunas detetadas: {', '.join(df.columns)}")
                 return None
                 
-        # 1. Limpeza Segura de Equipamentos
+        # Limpeza de Equipamentos
         df['EQUIPAMENTO'] = df['EQUIPAMENTO'].fillna('N/A').astype(str)
         df['EQUIPAMENTO'] = df['EQUIPAMENTO'].str.replace('[\u200B-\u200D\uFEFF\xA0]', ' ', regex=True)
         df['EQUIPAMENTO'] = df['EQUIPAMENTO'].str.replace(r'\s+', ' ', regex=True)
         df['EQUIPAMENTO'] = df['EQUIPAMENTO'].str.strip().str.upper()
-        
         df = df[df['EQUIPAMENTO'] != 'CS18']
         
-        # 2. Definir Modelo
+        # Definir Modelo
         if 'MODELO EQUIPAMENTO' in df.columns:
             df['MODELO'] = df['MODELO EQUIPAMENTO']
-        elif 'MODELO' in df.columns:
-            pass 
-        else:
-            df['MODELO'] = "N/A"
+        elif 'MODELO' in df.columns: pass 
+        else: df['MODELO'] = "N/A"
             
         df['MODELO'] = df['MODELO'].fillna('N/A').astype(str).str.strip().str.upper()
         
@@ -73,11 +78,11 @@ def carregar_dados(uploaded_file):
             
         df['MODELO'] = df.apply(lambda row: get_official_model(row['EQUIPAMENTO'], row['MODELO']), axis=1)
         
-        # Filtra apenas a frota oficial para os dois modelos
+        # Filtra a frota oficial
         df = df[~((df['MODELO'] == 'SKT110S') & (~df['EQUIPAMENTO'].isin(ALLOWED_110S)))]
         df = df[~((df['MODELO'] == 'SKT130PRO') & (~df['EQUIPAMENTO'].isin(ALLOWED_130PRO)))]
 
-        # 3. Processamento de Datas
+        # Processamento de Datas
         df['DATA_OBJ'] = pd.to_datetime(df['DATA INÍCIO'], errors='coerce')
         df = df.dropna(subset=['DATA_OBJ']).copy()
         
@@ -85,7 +90,6 @@ def carregar_dados(uploaded_file):
         df['mensal'] = df['DATA_OBJ'].dt.strftime('%m/%Y')
         df['semanal'] = df['DATA_OBJ'].apply(lambda x: f"Semana {x.isocalendar().week} - {x.isocalendar().year}")
         
-        # 4. Textos e Causas
         def preparar_coluna_texto(col_name, new_name):
             if col_name in df.columns:
                 df[new_name] = df[col_name].fillna('N/A').astype(str).str.strip().str.upper()
@@ -95,10 +99,8 @@ def carregar_dados(uploaded_file):
         preparar_coluna_texto('RESPONSABILIDADE NÍVEL 1', 'RESP1')
         preparar_coluna_texto('RESPONSABILIDADE NÍVEL 2', 'RESP2')
         preparar_coluna_texto('DETALHAMENTO', 'DETALHE')
-        
         df['CAUSA'] = df['RESP1'] + " | " + df['RESP2'] + " | " + df['DETALHE']
         
-        # 5. Horas
         df['HORAS'] = pd.to_numeric(df['TOTAL HORAS DECIMAIS'], errors='coerce').fillna(0)
         
         return df
@@ -148,50 +150,76 @@ def get_periodos_limite(df, view_type, max_date, limite):
     idx = next((i for i, obj in enumerate(todas_obj) if obj['sort'] <= target), 0)
     return todas_orig[idx : idx + limite][::-1] 
 
+def formatar_intervalo_datas(view_type, max_date, limite):
+    if view_type == 'diario':
+        start_date = max_date - pd.Timedelta(days=limite-1)
+        return f"{start_date.strftime('%d/%m/%Y')} a {max_date.strftime('%d/%m/%Y')}"
+    elif view_type == 'semanal':
+        start_date = max_date - pd.Timedelta(days=(limite*7)-1)
+        return f"{start_date.strftime('%d/%m/%Y')} a {max_date.strftime('%d/%m/%Y')}"
+    elif view_type == 'mensal':
+        start_date = max_date - pd.DateOffset(months=limite-1)
+        start_date = start_date.replace(day=1)
+        end_date = max_date.replace(day=calendar.monthrange(max_date.year, max_date.month)[1])
+        return f"{start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}"
+
 # --- CABEÇALHO ---
-col1, col2 = st.columns([4, 1])
-with col1:
-    st.title("📊 Dashboard Executivo de Disponibilidade Física")
-with col2:
+col_logo1, col_logo2 = st.columns([4, 1])
+with col_logo1:
+    st.title("📊 Dashboard Executivo DF")
+with col_logo2:
     st.image("https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcT2y4RDy3dJMu1cyGiZwdmtHCopiNFuD2etAOmssdlvjO-k7JbJ9I_5LA&s=10", width=150)
 
-# --- PAINEL DE CONTROLO ---
-with st.expander("🛠️ PAINEL DE CONTROLO E FILTROS", expanded=True):
-    c_f1 = st.columns(4)
-    file_upload = c_f1[0].file_uploader("1. Ficheiro Excel", type=['xlsx', 'xls'])
+# --- PAINEL DE CONTROLO NA SIDEBAR ---
+st.sidebar.header("🛠️ Configurações e Filtros")
+
+file_upload = st.sidebar.file_uploader("1. Ficheiro Excel", type=['xlsx', 'xls'])
+
+if file_upload:
+    df = carregar_dados(file_upload)
     
-    if file_upload:
-        df = carregar_dados(file_upload)
+    if df is not None and not df.empty:
+        visao = st.sidebar.selectbox("2. Visão", ['diario', 'semanal', 'mensal'], format_func=lambda x: x.capitalize())
         
-        if df is not None and not df.empty:
-            visao = c_f1[1].selectbox("2. Visão", ['diario', 'semanal', 'mensal'], format_func=lambda x: x.capitalize())
-            
-            periodos_disp, _ = get_periodos_ordenados(df, visao)
-            periodos_selecionados = c_f1[2].multiselect("3. Período(s)", periodos_disp, default=[periodos_disp[0]] if periodos_disp else [])
-            
-            modelos_disp = ["Todos os Modelos"] + sorted(df['MODELO'].unique())
-            modelo_sel = c_f1[3].selectbox("4. Modelo", modelos_disp)
-            
-            c_f2 = st.columns([1, 1, 1, 1, 1, 1, 2])
-            meta_perc = c_f2[0].number_input("5. Meta (%)", min_value=0.0, max_value=100.0, value=90.0, step=1.0)
-            meta_real = meta_perc / 100.0
-            
-            ordem_df = c_f2[1].selectbox("6. Ordem Gráfico", ['DF (Asc)', 'DF (Desc)', 'Eqp (A-Z)', 'Eqp (Z-A)'])
-            
-            qtd_dias = c_f2[2].number_input("7. Hist. Dias", value=7, min_value=1)
-            qtd_sem = c_f2[3].number_input("7. Hist. Sem", value=4, min_value=1)
-            qtd_mes = c_f2[4].number_input("7. Hist. Mês", value=12, min_value=1)
-            
-            eqp_mapping = {eqp: mod for eqp, mod in zip(df['EQUIPAMENTO'], df['MODELO'])}
-            for eqp in ALLOWED_110S: eqp_mapping[eqp] = 'SKT110S'
-            for eqp in ALLOWED_130PRO: eqp_mapping[eqp] = 'SKT130PRO'
-            
-            eqps_ativos = sorted(list(set([e for e, m in eqp_mapping.items() if modelo_sel == "Todos os Modelos" or m == modelo_sel])))
-            eqp_selecionados = c_f2[6].multiselect("8. Equipamentos (Análise)", eqps_ativos, default=eqps_ativos)
+        periodos_disp, _ = get_periodos_ordenados(df, visao)
+        periodos_selecionados = st.sidebar.multiselect("3. Período(s)", periodos_disp, default=[periodos_disp[0]] if periodos_disp else [])
+        
+        modelos_disp = ["Todos os Modelos"] + sorted(df['MODELO'].unique())
+        modelo_sel = st.sidebar.selectbox("4. Modelo", modelos_disp)
+        
+        meta_perc = st.sidebar.number_input("5. Meta (%)", min_value=0.0, max_value=100.0, value=90.0, step=1.0)
+        meta_real = meta_perc / 100.0
+        
+        ordem_df = st.sidebar.selectbox("6. Ordem Gráfico", ['DF (Asc)', 'DF (Desc)', 'Eqp (A-Z)', 'Eqp (Z-A)'])
+        
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("**7. Evolução (Qtd. Analisada)**")
+        c_d, c_s, c_m = st.sidebar.columns(3)
+        qtd_dias = c_d.number_input("Dias", value=7, min_value=1)
+        qtd_sem = c_s.number_input("Sem", value=4, min_value=1)
+        qtd_mes = c_m.number_input("Mês", value=12, min_value=1)
+        
+        # Filtro Dinâmico de Equipamentos
+        eqp_mapping = {eqp: mod for eqp, mod in zip(df['EQUIPAMENTO'], df['MODELO'])}
+        for eqp in ALLOWED_110S: eqp_mapping[eqp] = 'SKT110S'
+        for eqp in ALLOWED_130PRO: eqp_mapping[eqp] = 'SKT130PRO'
+        
+        eqps_ativos = sorted(list(set([e for e, m in eqp_mapping.items() if modelo_sel == "Todos os Modelos" or m == modelo_sel])))
+        eqp_selecionados = st.sidebar.multiselect("8. Equipamentos (Análise)", eqps_ativos, default=eqps_ativos)
+
+        # BOTÃO PARA GERAR PDF (Através de JavaScript Injetado)
+        st.sidebar.markdown("---")
+        pdf_button_html = """
+        <button onclick="window.print()" style="background-color:#d32f2f; color:white; padding:12px; border:none; border-radius:6px; width:100%; cursor:pointer; font-weight:bold; font-size:14px; text-transform:uppercase;">
+            📄 Exportar Relatório PDF
+        </button>
+        <p style="font-size:10px; color:#666; margin-top:5px; text-align:center;">Para formato A4, escolha a opção "Paisagem" na janela que abrir.</p>
+        """
+        st.sidebar.markdown(pdf_button_html, unsafe_allow_html=True)
 
 # --- RENDERIZAÇÃO DA ABA ---
-def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, tab_id):
-    st.markdown(f"### {titulo}")
+def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, tab_id, tipo_evolucao=None):
+    st.markdown(f"## {titulo}")
     
     if not periodos_analise:
         st.info("Nenhum período válido para análise nesta aba.")
@@ -226,19 +254,19 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
             """, unsafe_allow_html=True)
 
     # 2. GRÁFICO DE EVOLUÇÃO
-    if mostra_evolucao and len(modelos_loop) > 0:
-        p_evol = get_periodos_limite(df, visao, max_date, limite_evolucao)
+    if mostra_evolucao and len(modelos_loop) > 0 and tipo_evolucao:
+        p_evol = get_periodos_limite(df, tipo_evolucao, max_date, limite_evolucao)
         
         dados_linha = []
         for mod in modelos_loop:
             eqps_do_mod = [e for e in eqp_selecionados if eqp_mapping.get(e) == mod]
             for p in p_evol:
-                df_temp = df[(df[visao] == p) & (df['EQUIPAMENTO'].isin(eqps_do_mod))]
+                df_temp = df[(df[tipo_evolucao] == p) & (df['EQUIPAMENTO'].isin(eqps_do_mod))]
                 eqps_ativos_temp = df_temp['EQUIPAMENTO'].unique()
                 
                 if len(eqps_ativos_temp) == 0: continue
                 
-                h_b = calcular_horas_base(visao, [p]) * len(eqps_ativos_temp)
+                h_b = calcular_horas_base(tipo_evolucao, [p]) * len(eqps_ativos_temp)
                 h_p = df_temp['HORAS'].sum()
                 df_val = max(0, (h_b - h_p) / h_b) * 100
                 dados_linha.append({'Período': p, 'Modelo': mod, 'DF': df_val})
@@ -252,13 +280,10 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
             if min_y > meta_perc: min_y = meta_perc - 5
             fig_lin.update_yaxes(range=[min_y, 105])
             fig_lin.update_layout(title=f"EVOLUÇÃO DO DF POR MODELO ({limite_evolucao} PERÍODOS)", template="plotly_white", margin=dict(t=40, b=0, l=0, r=0))
-            
-            # Adicionada key única para evitar StreamlitDuplicateElementId
             st.plotly_chart(fig_lin, use_container_width=True, key=f"evol_{tab_id}")
 
-    # 3. DADOS POR EQUIPAMENTO (Gráfico de Barras - MOSTRAM TODOS DA FROTA MESMO 100%)
+    # 3. DADOS POR EQUIPAMENTO (Todos aparecem, mesmo 100%)
     eqps_para_analise = eqp_selecionados
-    
     if len(eqps_para_analise) == 0:
         st.info("Nenhum equipamento da frota foi selecionado.")
         return
@@ -272,8 +297,7 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
     
     if horas_base_eqp > 0:
         agrup_eqp['DF'] = (horas_base_eqp - agrup_eqp['HORAS']) / horas_base_eqp
-    else:
-        agrup_eqp['DF'] = 0
+    else: agrup_eqp['DF'] = 0
         
     agrup_eqp['DF'] = agrup_eqp['DF'].apply(lambda x: max(0, x))
     agrup_eqp['DF_Perc'] = agrup_eqp['DF'] * 100
@@ -294,8 +318,6 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
     if min_bar_y > meta_perc: min_bar_y = meta_perc - 5
     fig_bar.update_layout(title="DF POR EQUIPAMENTO (%)", template="plotly_white", margin=dict(t=40, b=0, l=0, r=0))
     fig_bar.update_yaxes(range=[min_bar_y, 105])
-    
-    # Adicionada key única
     st.plotly_chart(fig_bar, use_container_width=True, key=f"bar_eqp_{tab_id}")
 
     # 4. GRÁFICOS DE CAUSA
@@ -306,8 +328,6 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
             fig_r1 = px.pie(agrup_r1, names='RESP1', values='HORAS', hole=0.5, title="HORAS PARADAS POR RESP. NÍVEL 1", color_discrete_sequence=['#111', '#444', '#777', '#aaa'])
             fig_r1.update_traces(textinfo='percent+value')
             fig_r1.update_layout(margin=dict(t=40, b=0, l=0, r=0))
-            
-            # Adicionada key única
             st.plotly_chart(fig_r1, use_container_width=True, key=f"pie_r1_{tab_id}")
 
     with c_c2:
@@ -315,8 +335,6 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
         if not agrup_r2.empty and agrup_r2['HORAS'].sum() > 0:
             fig_r2 = px.bar(agrup_r2, x='HORAS', y='RESP2', orientation='h', title="ACUMULADO: RESP. NÍVEL 2 (TOP 10)", color_discrete_sequence=['#444'])
             fig_r2.update_layout(template="plotly_white", margin=dict(t=40, b=0, l=0, r=0), yaxis_title="")
-            
-            # Adicionada key única
             st.plotly_chart(fig_r2, use_container_width=True, key=f"bar_r2_{tab_id}")
 
     agrup_det = df_p_analise.groupby('DETALHE')['HORAS'].sum().nlargest(10).reset_index().sort_values('HORAS', ascending=True)
@@ -324,18 +342,28 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
         agrup_det['DETALHE'] = agrup_det['DETALHE'].apply(lambda x: x[:40]+'...' if len(x)>40 else x)
         fig_det = px.bar(agrup_det, x='HORAS', y='DETALHE', orientation='h', title="ACUMULADO: DETALHAMENTO (TOP 10)", color_discrete_sequence=['#444'])
         fig_det.update_layout(template="plotly_white", margin=dict(t=40, b=0, l=0, r=0), yaxis_title="")
-        
-        # Adicionada key única
         st.plotly_chart(fig_det, use_container_width=True, key=f"bar_det_{tab_id}")
 
-    # 5. TABELA DE PLANO DE AÇÃO
-    st.markdown("### 🔻 PLANO DE AÇÃO: EQUIPAMENTOS ABAIXO DA META")
+    # 5. TABELA EM HTML PURO COM PRE-WRAP (RESOLVE O CORTE DE TEXTO)
+    st.markdown("### 🔻 PRINCIPAIS CONTRIBUINTES: EQUIPAMENTOS ABAIXO DA META")
     abaixo_meta = agrup_eqp[agrup_eqp['DF_Perc'] < meta_perc].copy()
     
     if abaixo_meta.empty:
         st.success("🎉 Excelente! Nenhum equipamento selecionado ficou abaixo da meta neste período.")
     else:
-        tabela_dados = []
+        tabela_html = """
+        <table style="width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+          <thead>
+            <tr style="background-color: #222; color: white; text-align: left;">
+              <th style="padding: 12px; border: 1px solid #ddd;">Equipamento</th>
+              <th style="padding: 12px; border: 1px solid #ddd;">Meta DF</th>
+              <th style="padding: 12px; border: 1px solid #ddd;">DF Calculado</th>
+              <th style="padding: 12px; border: 1px solid #ddd;">Diferença</th>
+              <th style="padding: 12px; border: 1px solid #ddd; width: 50%;">Principais Fatores Contribuintes</th>
+            </tr>
+          </thead>
+          <tbody>
+        """
         for _, row in abaixo_meta.iterrows():
             eqp = row['EQUIPAMENTO']
             df_calc = row['DF_Perc']
@@ -343,22 +371,28 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
             tot_horas = row['HORAS']
             
             causas_eqp = df_p_analise[df_p_analise['EQUIPAMENTO'] == eqp].groupby('CAUSA')['HORAS'].sum().nlargest(5)
-            causas_str = f"Total Acumulado: {tot_horas:.2f}h\n"
+            
+            # Formatação cuidada do texto
+            causas_html = f"<div style='margin-bottom:5px; padding-bottom:5px; border-bottom:1px dashed #ccc;'><b>Total Horas Acumuladas no Período:</b> <span style='color:#d32f2f; font-weight:bold;'>{tot_horas:.2f}h</span></div>"
+            
             for causa, hrs in causas_eqp.items():
                 perc = (hrs / tot_horas) * 100 if tot_horas > 0 else 0
-                causas_str += f"• {causa} [{hrs:.2f}h ➔ {perc:.1f}%]\n"
+                causas_html += f"&bull; <b>{causa}</b> <span style='color:#666;'>[{hrs:.2f}h &rarr; <b>{perc:.1f}%</b>]</span><br>"
             
-            tabela_dados.append({
-                "Equipamento": eqp,
-                "Meta DF": f"{meta_perc:.2f}%",
-                "DF Calculado": f"{df_calc:.2f}%",
-                "Diferença": f"-{dif:.2f}%",
-                "Principais Fatores Contribuintes": causas_str
-            })
-        st.dataframe(pd.DataFrame(tabela_dados), use_container_width=True)
+            tabela_html += f"""
+            <tr>
+              <td style="padding: 12px; border: 1px solid #ddd; font-weight:bold;">{eqp}</td>
+              <td style="padding: 12px; border: 1px solid #ddd;">{meta_perc:.2f}%</td>
+              <td style="padding: 12px; border: 1px solid #ddd; color: #d32f2f; font-weight:bold;">{df_calc:.2f}%</td>
+              <td style="padding: 12px; border: 1px solid #ddd; color: #d32f2f; font-weight:bold;">-{dif:.2f}%</td>
+              <td style="padding: 12px; border: 1px solid #ddd; white-space: pre-wrap; line-height: 1.5;">{causas_html}</td>
+            </tr>
+            """
+        tabela_html += "</tbody></table>"
+        st.markdown(tabela_html, unsafe_allow_html=True)
 
 
-# --- EXECUÇÃO E ABAS ---
+# --- INÍCIO DA RENDERIZAÇÃO DAS ABAS ---
 if file_upload and 'df' in locals() and df is not None and len(periodos_selecionados) > 0 and len(eqp_selecionados) > 0:
     
     max_date_geral = df[df[visao].isin(periodos_selecionados)]['DATA_OBJ'].max() if not df[df[visao].isin(periodos_selecionados)].empty else df['DATA_OBJ'].max()
@@ -366,28 +400,32 @@ if file_upload and 'df' in locals() and df is not None and len(periodos_selecion
     tab1, tab2, tab3, tab4 = st.tabs(["Dashboard Principal", "Acumulado Diário", "Acumulado Semanal", "Acumulado Mensal"])
     
     with tab1:
+        desc = periodos_selecionados[0] if len(periodos_selecionados)==1 else f"{len(periodos_selecionados)} Períodos Selecionados"
         renderizar_aba(
-            titulo=f"Visão: {visao.capitalize()} | Períodos: {', '.join(periodos_selecionados)}",
+            titulo=f"Visão: {visao.capitalize()} | Períodos: {desc}",
             periodos_analise=periodos_selecionados, mostra_evolucao=False, limite_evolucao=0, tab_id="prin"
         )
         
     with tab2:
         p_dia = get_periodos_limite(df, 'diario', max_date_geral, qtd_dias)
+        intervalo = formatar_intervalo_datas('diario', max_date_geral, qtd_dias)
         renderizar_aba(
-            titulo=f"Acumulado Diário (Últimos {qtd_dias} dias baseados em {max_date_geral.strftime('%d/%m/%Y')})",
-            periodos_analise=p_dia, mostra_evolucao=True, limite_evolucao=qtd_dias, tab_id="dia"
+            titulo=f"Acumulado Diário (Últimos {qtd_dias} Dias | {intervalo})",
+            periodos_analise=p_dia, mostra_evolucao=True, limite_evolucao=qtd_dias, tab_id="dia", tipo_evolucao='diario'
         )
         
     with tab3:
         p_sem = get_periodos_limite(df, 'semanal', max_date_geral, qtd_sem)
+        intervalo = formatar_intervalo_datas('semanal', max_date_geral, qtd_sem)
         renderizar_aba(
-            titulo=f"Acumulado Semanal (Últimas {qtd_sem} semanas baseadas em {max_date_geral.strftime('%d/%m/%Y')})",
-            periodos_analise=p_sem, mostra_evolucao=True, limite_evolucao=qtd_sem, tab_id="sem"
+            titulo=f"Acumulado Semanal (Últimas {qtd_sem} Semanas | {intervalo})",
+            periodos_analise=p_sem, mostra_evolucao=True, limite_evolucao=qtd_sem, tab_id="sem", tipo_evolucao='semanal'
         )
         
     with tab4:
         p_mes = get_periodos_limite(df, 'mensal', max_date_geral, qtd_mes)
+        intervalo = formatar_intervalo_datas('mensal', max_date_geral, qtd_mes)
         renderizar_aba(
-            titulo=f"Acumulado Mensal (Últimos {qtd_mes} meses baseados em {max_date_geral.strftime('%d/%m/%Y')})",
-            periodos_analise=p_mes, mostra_evolucao=True, limite_evolucao=qtd_mes, tab_id="mes"
+            titulo=f"Acumulado Mensal (Últimos {qtd_mes} Meses | {intervalo})",
+            periodos_analise=p_mes, mostra_evolucao=True, limite_evolucao=qtd_mes, tab_id="mes", tipo_evolucao='mensal'
         )

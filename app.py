@@ -207,7 +207,7 @@ if file_upload:
         eqps_ativos = sorted(list(set([e for e, m in eqp_mapping.items() if modelo_sel == "Todos os Modelos" or m == modelo_sel])))
         eqp_selecionados = st.sidebar.multiselect("8. Equipamentos (Análise)", eqps_ativos, default=eqps_ativos)
 
-        # BOTÃO PARA GERAR PDF (Através de JavaScript Injetado)
+        # BOTÃO PARA GERAR PDF
         st.sidebar.markdown("---")
         pdf_button_html = """
         <button onclick="window.print()" style="background-color:#d32f2f; color:white; padding:12px; border:none; border-radius:6px; width:100%; cursor:pointer; font-weight:bold; font-size:14px; text-transform:uppercase;">
@@ -282,7 +282,7 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
             fig_lin.update_layout(title=f"EVOLUÇÃO DO DF POR MODELO ({limite_evolucao} PERÍODOS)", template="plotly_white", margin=dict(t=40, b=0, l=0, r=0))
             st.plotly_chart(fig_lin, use_container_width=True, key=f"evol_{tab_id}")
 
-    # 3. DADOS POR EQUIPAMENTO (Todos aparecem, mesmo 100%)
+    # 3. DADOS POR EQUIPAMENTO
     eqps_para_analise = eqp_selecionados
     if len(eqps_para_analise) == 0:
         st.info("Nenhum equipamento da frota foi selecionado.")
@@ -297,7 +297,8 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
     
     if horas_base_eqp > 0:
         agrup_eqp['DF'] = (horas_base_eqp - agrup_eqp['HORAS']) / horas_base_eqp
-    else: agrup_eqp['DF'] = 0
+    else:
+        agrup_eqp['DF'] = 0
         
     agrup_eqp['DF'] = agrup_eqp['DF'].apply(lambda x: max(0, x))
     agrup_eqp['DF_Perc'] = agrup_eqp['DF'] * 100
@@ -344,26 +345,23 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
         fig_det.update_layout(template="plotly_white", margin=dict(t=40, b=0, l=0, r=0), yaxis_title="")
         st.plotly_chart(fig_det, use_container_width=True, key=f"bar_det_{tab_id}")
 
-    # 5. TABELA EM HTML PURO COM PRE-WRAP (RESOLVE O CORTE DE TEXTO)
+    # 5. TABELA EM HTML PURO COM CONCATENAÇÃO EM LINHA (RESOLVE RENDERIZAÇÃO E CORTES)
     st.markdown("### 🔻 PRINCIPAIS CONTRIBUINTES: EQUIPAMENTOS ABAIXO DA META")
     abaixo_meta = agrup_eqp[agrup_eqp['DF_Perc'] < meta_perc].copy()
     
     if abaixo_meta.empty:
         st.success("🎉 Excelente! Nenhum equipamento selecionado ficou abaixo da meta neste período.")
     else:
-        tabela_html = """
-        <table style="width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-          <thead>
-            <tr style="background-color: #222; color: white; text-align: left;">
-              <th style="padding: 12px; border: 1px solid #ddd;">Equipamento</th>
-              <th style="padding: 12px; border: 1px solid #ddd;">Meta DF</th>
-              <th style="padding: 12px; border: 1px solid #ddd;">DF Calculado</th>
-              <th style="padding: 12px; border: 1px solid #ddd;">Diferença</th>
-              <th style="padding: 12px; border: 1px solid #ddd; width: 50%;">Principais Fatores Contribuintes</th>
-            </tr>
-          </thead>
-          <tbody>
-        """
+        # Construção do HTML em linha contínua sem formatação de parágrafos/espaços para evitar bugs de markdown
+        tabela_html = "<table style='width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);'>"
+        tabela_html += "<thead><tr style='background-color: #222; color: white; text-align: left;'>"
+        tabela_html += "<th style='padding: 12px; border: 1px solid #ddd;'>Equipamento</th>"
+        tabela_html += "<th style='padding: 12px; border: 1px solid #ddd;'>Meta DF</th>"
+        tabela_html += "<th style='padding: 12px; border: 1px solid #ddd;'>DF Calculado</th>"
+        tabela_html += "<th style='padding: 12px; border: 1px solid #ddd;'>Diferença</th>"
+        tabela_html += "<th style='padding: 12px; border: 1px solid #ddd; width: 50%;'>Principais Fatores Contribuintes</th>"
+        tabela_html += "</tr></thead><tbody>"
+        
         for _, row in abaixo_meta.iterrows():
             eqp = row['EQUIPAMENTO']
             df_calc = row['DF_Perc']
@@ -372,22 +370,19 @@ def renderizar_aba(titulo, periodos_analise, mostra_evolucao, limite_evolucao, t
             
             causas_eqp = df_p_analise[df_p_analise['EQUIPAMENTO'] == eqp].groupby('CAUSA')['HORAS'].sum().nlargest(5)
             
-            # Formatação cuidada do texto
             causas_html = f"<div style='margin-bottom:5px; padding-bottom:5px; border-bottom:1px dashed #ccc;'><b>Total Horas Acumuladas no Período:</b> <span style='color:#d32f2f; font-weight:bold;'>{tot_horas:.2f}h</span></div>"
-            
             for causa, hrs in causas_eqp.items():
                 perc = (hrs / tot_horas) * 100 if tot_horas > 0 else 0
                 causas_html += f"&bull; <b>{causa}</b> <span style='color:#666;'>[{hrs:.2f}h &rarr; <b>{perc:.1f}%</b>]</span><br>"
             
-            tabela_html += f"""
-            <tr>
-              <td style="padding: 12px; border: 1px solid #ddd; font-weight:bold;">{eqp}</td>
-              <td style="padding: 12px; border: 1px solid #ddd;">{meta_perc:.2f}%</td>
-              <td style="padding: 12px; border: 1px solid #ddd; color: #d32f2f; font-weight:bold;">{df_calc:.2f}%</td>
-              <td style="padding: 12px; border: 1px solid #ddd; color: #d32f2f; font-weight:bold;">-{dif:.2f}%</td>
-              <td style="padding: 12px; border: 1px solid #ddd; white-space: pre-wrap; line-height: 1.5;">{causas_html}</td>
-            </tr>
-            """
+            tabela_html += "<tr>"
+            tabela_html += f"<td style='padding: 12px; border: 1px solid #ddd; font-weight:bold;'>{eqp}</td>"
+            tabela_html += f"<td style='padding: 12px; border: 1px solid #ddd;'>{meta_perc:.2f}%</td>"
+            tabela_html += f"<td style='padding: 12px; border: 1px solid #ddd; color: #d32f2f; font-weight:bold;'>{df_calc:.2f}%</td>"
+            tabela_html += f"<td style='padding: 12px; border: 1px solid #ddd; color: #d32f2f; font-weight:bold;'>-{dif:.2f}%</td>"
+            tabela_html += f"<td style='padding: 12px; border: 1px solid #ddd; white-space: pre-wrap; line-height: 1.5;'>{causas_html}</td>"
+            tabela_html += "</tr>"
+            
         tabela_html += "</tbody></table>"
         st.markdown(tabela_html, unsafe_allow_html=True)
 
